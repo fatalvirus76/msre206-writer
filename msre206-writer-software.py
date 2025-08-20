@@ -1,18 +1,25 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
-import serial
-import serial.tools.list_ports
+import sys
 import time
 import random
 from datetime import datetime, timedelta
+import serial
+import serial.tools.list_ports
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
+    QLabel, QLineEdit, QPushButton, QComboBox, QTabWidget, QTextEdit,
+    QCheckBox, QRadioButton, QMessageBox, QMenuBar
+)
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QAction, QPalette, QColor, QTextCursor
 
-class MSRE206App:
-    def __init__(self, root):
-        self.root = root
+class MSRE206_Qt_App(QMainWindow):
+    def __init__(self):
+        super().__init__()
         self.ser = None
         self.is_connected = False
 
         # --- Internationalization (i18n) Setup ---
+        # Samma språkdata som i originalet
         self.languages = {
             "EN": {
                 "window_title": "MSRE206 Magnetic Card Reader/Writer",
@@ -139,492 +146,643 @@ class MSRE206App:
                 "copied_to_track1": "Kopierat till Spår 1", "copied_to_track2": "Kopierat till Spår 2", "copied_to_both": "Kopierat till båda spåren"
             }
         }
-        self.current_language = "EN"  # Default language
+        self.current_language = "SV"  # Starta med svenska
         self.strings = self.languages[self.current_language]
 
-        self.root.geometry("900x800")
-        
-        self.create_widgets()
+        self.init_ui()
+        self.create_themes()
+        self.set_theme("Light") # Standardtema
         self.auto_detect_port()
-        self.set_theme("Light") # Set default theme
-        self.update_ui_text() # Set initial UI text
+        self.update_ui_text()
 
-    def create_widgets(self):
-        # --- Menu Bar ---
-        self.menu_bar = tk.Menu(self.root)
-        self.root.config(menu=self.menu_bar)
+    def init_ui(self):
+        """Skapar och organiserar alla UI-komponenter."""
+        self.setWindowTitle(self.strings["window_title"])
+        self.setGeometry(100, 100, 900, 800)
 
-        # Theme Menu
-        self.theme_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.menu_bar.add_cascade(label=self.strings["themes"], menu=self.theme_menu)
-        self.theme_menu.add_command(label=self.strings["light"], command=lambda: self.set_theme("Light"))
-        self.theme_menu.add_command(label=self.strings["dark"], command=lambda: self.set_theme("Dark"))
-        self.theme_menu.add_command(label=self.strings["matrix"], command=lambda: self.set_theme("Matrix"))
-        self.theme_menu.add_command(label=self.strings["synthwave"], command=lambda: self.set_theme("Synthwave"))
-        self.theme_menu.add_command(label=self.strings["dracula"], command=lambda: self.set_theme("Dracula"))
+        # Huvud-widget och layout
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QVBoxLayout(main_widget)
 
-        # Language Menu
-        self.language_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.menu_bar.add_cascade(label=self.strings["language"], menu=self.language_menu)
-        self.language_menu.add_command(label="English", command=lambda: self.set_language("EN"))
-        self.language_menu.add_command(label="Svenska", command=lambda: self.set_language("SV"))
+        self.create_menu()
 
-        # --- Connection Frame ---
-        self.connection_frame = ttk.LabelFrame(self.root, padding=10)
-        self.connection_frame.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
+        # Skapa UI-sektioner
+        main_layout.addWidget(self.create_connection_group())
+        
+        self.notebook = QTabWidget()
+        self.setup_tabs()
+        main_layout.addWidget(self.notebook)
 
-        self.port_label = ttk.Label(self.connection_frame)
-        self.port_label.grid(row=0, column=0, sticky="w")
-        self.port_var = tk.StringVar()
-        self.port_combo = ttk.Combobox(self.connection_frame, textvariable=self.port_var, width=15)
-        self.port_combo.grid(row=0, column=1, padx=5)
+        main_layout.addWidget(self.create_log_group())
 
-        self.refresh_btn = ttk.Button(self.connection_frame, command=self.refresh_ports)
-        self.refresh_btn.grid(row=0, column=2, padx=5)
+        self.update_connection_status_ui()
 
-        self.connect_btn = ttk.Button(self.connection_frame, command=self.toggle_connection)
-        self.connect_btn.grid(row=0, column=3, padx=5)
+    def create_menu(self):
+        """Skapar menyraden för teman och språk."""
+        self.menu_bar = self.menuBar()
 
-        self.status_label = ttk.Label(self.connection_frame, foreground="red")
-        self.status_label.grid(row=0, column=4, padx=10)
+        # Temameny
+        self.theme_menu = self.menu_bar.addMenu("")
+        self.theme_light_action = QAction("", self)
+        self.theme_light_action.triggered.connect(lambda: self.set_theme("Light"))
+        self.theme_menu.addAction(self.theme_light_action)
+        
+        self.theme_dark_action = QAction("", self)
+        self.theme_dark_action.triggered.connect(lambda: self.set_theme("Dark"))
+        self.theme_menu.addAction(self.theme_dark_action)
 
-        # --- Notebook for Tabs ---
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="nsew")
+        self.theme_matrix_action = QAction("", self)
+        self.theme_matrix_action.triggered.connect(lambda: self.set_theme("Matrix"))
+        self.theme_menu.addAction(self.theme_matrix_action)
 
-        self.basic_tab = ttk.Frame(self.notebook)
-        self.advanced_tab = ttk.Frame(self.notebook)
-        self.raw_tab = ttk.Frame(self.notebook)
-        self.config_tab = ttk.Frame(self.notebook)
-        self.generator_tab = ttk.Frame(self.notebook)
+        self.theme_synthwave_action = QAction("", self)
+        self.theme_synthwave_action.triggered.connect(lambda: self.set_theme("Synthwave"))
+        self.theme_menu.addAction(self.theme_synthwave_action)
 
-        self.notebook.add(self.basic_tab, text=self.strings["basic"])
-        self.notebook.add(self.advanced_tab, text=self.strings["advanced"])
-        self.notebook.add(self.raw_tab, text=self.strings["raw_data"])
-        self.notebook.add(self.config_tab, text=self.strings["configuration"])
-        self.notebook.add(self.generator_tab, text=self.strings["generator"])
+        self.theme_dracula_action = QAction("", self)
+        self.theme_dracula_action.triggered.connect(lambda: self.set_theme("Dracula"))
+        self.theme_menu.addAction(self.theme_dracula_action)
 
-        # Setup each tab's content
+        # Språkmeny
+        self.language_menu = self.menu_bar.addMenu("")
+        en_action = QAction("English", self)
+        en_action.triggered.connect(lambda: self.set_language("EN"))
+        self.language_menu.addAction(en_action)
+        
+        sv_action = QAction("Svenska", self)
+        sv_action.triggered.connect(lambda: self.set_language("SV"))
+        self.language_menu.addAction(sv_action)
+
+    def create_connection_group(self):
+        """Skapar gruppen för anslutningsinställningar."""
+        self.connection_group = QGroupBox()
+        layout = QHBoxLayout(self.connection_group)
+
+        self.port_label = QLabel()
+        layout.addWidget(self.port_label)
+
+        self.port_combo = QComboBox()
+        layout.addWidget(self.port_combo)
+
+        self.refresh_btn = QPushButton()
+        self.refresh_btn.clicked.connect(self.refresh_ports)
+        layout.addWidget(self.refresh_btn)
+
+        self.connect_btn = QPushButton()
+        self.connect_btn.clicked.connect(self.toggle_connection)
+        layout.addWidget(self.connect_btn)
+
+        self.status_label = QLabel()
+        layout.addWidget(self.status_label)
+        layout.addStretch(1) # Fyller ut resten av utrymmet
+
+        return self.connection_group
+
+    def setup_tabs(self):
+        """Skapar alla flikar i applikationen."""
+        self.basic_tab = QWidget()
         self.setup_basic_tab()
+        self.notebook.addTab(self.basic_tab, "")
+
+        self.advanced_tab = QWidget()
         self.setup_advanced_tab()
+        self.notebook.addTab(self.advanced_tab, "")
+
+        self.raw_tab = QWidget()
         self.setup_raw_tab()
+        self.notebook.addTab(self.raw_tab, "")
+
+        self.config_tab = QWidget()
         self.setup_config_tab()
+        self.notebook.addTab(self.config_tab, "")
+
+        self.generator_tab = QWidget()
         self.setup_generator_tab()
-
-        # --- Log Frame ---
-        self.log_frame = ttk.LabelFrame(self.root, padding=10)
-        self.log_frame.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="nsew")
-
-        self.log_text = scrolledtext.ScrolledText(self.log_frame, height=10, width=85, state="disabled")
-        self.log_text.pack(fill="both", expand=True)
-
-        # Configure grid weights
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=1)
-        self.root.rowconfigure(2, weight=1)
+        self.notebook.addTab(self.generator_tab, "")
 
     def setup_basic_tab(self):
-        self.data_frame = ttk.LabelFrame(self.basic_tab, padding=10)
-        self.data_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        """Skapar innehållet för 'Grundläggande'-fliken."""
+        layout = QVBoxLayout(self.basic_tab)
+        self.data_group = QGroupBox()
+        data_layout = QVBoxLayout(self.data_group)
         
-        self.track1_label = ttk.Label(self.data_frame)
-        self.track1_label.grid(row=0, column=0, sticky="w", pady=5)
-        self.track1_var = tk.StringVar()
-        ttk.Entry(self.data_frame, textvariable=self.track1_var, width=70).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        
-        self.track2_label = ttk.Label(self.data_frame)
-        self.track2_label.grid(row=1, column=0, sticky="w", pady=5)
-        self.track2_var = tk.StringVar()
-        ttk.Entry(self.data_frame, textvariable=self.track2_var, width=70).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        
-        self.track3_label = ttk.Label(self.data_frame)
-        self.track3_label.grid(row=2, column=0, sticky="w", pady=5)
-        self.track3_var = tk.StringVar()
-        ttk.Entry(self.data_frame, textvariable=self.track3_var, width=70).grid(row=2, column=1, padx=5, pady=5, sticky="ew")
-        
-        self.select_tracks_label = ttk.Label(self.data_frame)
-        self.select_tracks_label.grid(row=3, column=0, sticky="w", pady=10)
-        
-        self.track1_write = tk.BooleanVar(value=True)
-        self.track2_write = tk.BooleanVar(value=True)
-        self.track3_write = tk.BooleanVar(value=True)
-        
-        track_select_frame = ttk.Frame(self.data_frame)
-        track_select_frame.grid(row=3, column=1, sticky="w", pady=10)
-        
-        self.track1_check = ttk.Checkbutton(track_select_frame, text=self.strings["track1"][:-1], variable=self.track1_write)
-        self.track1_check.pack(side="left", padx=5)
-        self.track2_check = ttk.Checkbutton(track_select_frame, text=self.strings["track2"][:-1], variable=self.track2_write)
-        self.track2_check.pack(side="left", padx=5)
-        self.track3_check = ttk.Checkbutton(track_select_frame, text=self.strings["track3"][:-1], variable=self.track3_write)
-        self.track3_check.pack(side="left", padx=5)
-        
-        buttons_frame = ttk.Frame(self.data_frame)
-        buttons_frame.grid(row=4, column=0, columnspan=2, pady=10)
-        
-        self.read_btn = ttk.Button(buttons_frame, command=self.read_card, state="disabled")
-        self.read_btn.pack(side="left", padx=5)
-        self.write_btn = ttk.Button(buttons_frame, command=self.write_card, state="disabled")
-        self.write_btn.pack(side="left", padx=5)
-        self.erase_btn = ttk.Button(buttons_frame, command=self.erase_card, state="disabled")
-        self.erase_btn.pack(side="left", padx=5)
-        
-        self.data_frame.columnconfigure(1, weight=1)
+        # Track 1, 2, 3
+        self.track1_label = QLabel()
+        self.track1_edit = QLineEdit()
+        data_layout.addWidget(self.track1_label)
+        data_layout.addWidget(self.track1_edit)
 
+        self.track2_label = QLabel()
+        self.track2_edit = QLineEdit()
+        data_layout.addWidget(self.track2_label)
+        data_layout.addWidget(self.track2_edit)
+
+        self.track3_label = QLabel()
+        self.track3_edit = QLineEdit()
+        data_layout.addWidget(self.track3_label)
+        data_layout.addWidget(self.track3_edit)
+
+        # Checkboxar för val av spår
+        self.select_tracks_label = QLabel()
+        data_layout.addWidget(self.select_tracks_label)
+        
+        checkbox_layout = QHBoxLayout()
+        self.track1_check = QCheckBox()
+        self.track1_check.setChecked(True)
+        self.track2_check = QCheckBox()
+        self.track2_check.setChecked(True)
+        self.track3_check = QCheckBox()
+        self.track3_check.setChecked(True)
+        checkbox_layout.addWidget(self.track1_check)
+        checkbox_layout.addWidget(self.track2_check)
+        checkbox_layout.addWidget(self.track3_check)
+        checkbox_layout.addStretch(1)
+        data_layout.addLayout(checkbox_layout)
+
+        # Knappar
+        button_layout = QHBoxLayout()
+        self.read_btn = QPushButton()
+        self.read_btn.clicked.connect(self.read_card)
+        self.write_btn = QPushButton()
+        self.write_btn.clicked.connect(self.write_card)
+        self.erase_btn = QPushButton()
+        self.erase_btn.clicked.connect(self.erase_card)
+        button_layout.addWidget(self.read_btn)
+        button_layout.addWidget(self.write_btn)
+        button_layout.addWidget(self.erase_btn)
+        button_layout.addStretch(1)
+        data_layout.addLayout(button_layout)
+
+        data_layout.addStretch(1)
+        layout.addWidget(self.data_group)
+    
     def setup_advanced_tab(self):
-        self.led_frame = ttk.LabelFrame(self.advanced_tab, padding=10)
-        self.led_frame.pack(fill="x", padx=10, pady=5)
-        led_btn_frame = ttk.Frame(self.led_frame)
-        led_btn_frame.pack(fill="x")
-        self.all_led_on_btn = ttk.Button(led_btn_frame, command=lambda: self.led_control(0x82))
-        self.all_led_on_btn.pack(side="left", padx=5)
-        self.all_led_off_btn = ttk.Button(led_btn_frame, command=lambda: self.led_control(0x81))
-        self.all_led_off_btn.pack(side="left", padx=5)
-        self.green_led_btn = ttk.Button(led_btn_frame, command=lambda: self.led_control(0x83))
-        self.green_led_btn.pack(side="left", padx=5)
-        self.yellow_led_btn = ttk.Button(led_btn_frame, command=lambda: self.led_control(0x84))
-        self.yellow_led_btn.pack(side="left", padx=5)
-        self.red_led_btn = ttk.Button(led_btn_frame, command=lambda: self.led_control(0x85))
-        self.red_led_btn.pack(side="left", padx=5)
-        
-        self.test_frame = ttk.LabelFrame(self.advanced_tab, padding=10)
-        self.test_frame.pack(fill="x", padx=10, pady=5)
-        test_btn_frame = ttk.Frame(self.test_frame)
-        test_btn_frame.pack(fill="x")
-        self.comm_test_btn = ttk.Button(test_btn_frame, command=self.communication_test)
-        self.comm_test_btn.pack(side="left", padx=5)
-        self.sensor_test_btn = ttk.Button(test_btn_frame, command=self.sensor_test)
-        self.sensor_test_btn.pack(side="left", padx=5)
-        self.ram_test_btn = ttk.Button(test_btn_frame, command=self.ram_test)
-        self.ram_test_btn.pack(side="left", padx=5)
-        
-        self.info_frame = ttk.LabelFrame(self.advanced_tab, padding=10)
-        self.info_frame.pack(fill="x", padx=10, pady=5)
-        info_btn_frame = ttk.Frame(self.info_frame)
-        info_btn_frame.pack(fill="x")
-        self.get_model_btn = ttk.Button(info_btn_frame, command=self.get_device_model)
-        self.get_model_btn.pack(side="left", padx=5)
-        self.get_firmware_btn = ttk.Button(info_btn_frame, command=self.get_firmware_version)
-        self.get_firmware_btn.pack(side="left", padx=5)
-        self.get_coercivity_btn = ttk.Button(info_btn_frame, command=self.get_coercivity_status)
-        self.get_coercivity_btn.pack(side="left", padx=5)
+        """Skapar innehållet för 'Avancerat'-fliken."""
+        layout = QVBoxLayout(self.advanced_tab)
+
+        # LED-kontroll
+        self.led_group = QGroupBox()
+        led_layout = QHBoxLayout(self.led_group)
+        self.all_led_on_btn = QPushButton()
+        self.all_led_on_btn.clicked.connect(lambda: self.led_control(0x82))
+        self.all_led_off_btn = QPushButton()
+        self.all_led_off_btn.clicked.connect(lambda: self.led_control(0x81))
+        self.green_led_btn = QPushButton()
+        self.green_led_btn.clicked.connect(lambda: self.led_control(0x83))
+        self.yellow_led_btn = QPushButton()
+        self.yellow_led_btn.clicked.connect(lambda: self.led_control(0x84))
+        self.red_led_btn = QPushButton()
+        self.red_led_btn.clicked.connect(lambda: self.led_control(0x85))
+        led_layout.addWidget(self.all_led_on_btn)
+        led_layout.addWidget(self.all_led_off_btn)
+        led_layout.addWidget(self.green_led_btn)
+        led_layout.addWidget(self.yellow_led_btn)
+        led_layout.addWidget(self.red_led_btn)
+        led_layout.addStretch(1)
+        layout.addWidget(self.led_group)
+
+        # Testfunktioner
+        self.test_group = QGroupBox()
+        test_layout = QHBoxLayout(self.test_group)
+        self.comm_test_btn = QPushButton()
+        self.comm_test_btn.clicked.connect(self.communication_test)
+        self.sensor_test_btn = QPushButton()
+        self.sensor_test_btn.clicked.connect(self.sensor_test)
+        self.ram_test_btn = QPushButton()
+        self.ram_test_btn.clicked.connect(self.ram_test)
+        test_layout.addWidget(self.comm_test_btn)
+        test_layout.addWidget(self.sensor_test_btn)
+        test_layout.addWidget(self.ram_test_btn)
+        test_layout.addStretch(1)
+        layout.addWidget(self.test_group)
+
+        # Enhetsinformation
+        self.info_group = QGroupBox()
+        info_layout = QHBoxLayout(self.info_group)
+        self.get_model_btn = QPushButton()
+        self.get_model_btn.clicked.connect(self.get_device_model)
+        self.get_firmware_btn = QPushButton()
+        self.get_firmware_btn.clicked.connect(self.get_firmware_version)
+        self.get_coercivity_btn = QPushButton()
+        self.get_coercivity_btn.clicked.connect(self.get_coercivity_status)
+        info_layout.addWidget(self.get_model_btn)
+        info_layout.addWidget(self.get_firmware_btn)
+        info_layout.addWidget(self.get_coercivity_btn)
+        info_layout.addStretch(1)
+        layout.addWidget(self.info_group)
+
+        layout.addStretch(1)
 
     def setup_raw_tab(self):
-        self.raw_frame = ttk.LabelFrame(self.raw_tab, padding=10)
-        self.raw_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        self.raw_track1_label = ttk.Label(self.raw_frame)
-        self.raw_track1_label.grid(row=0, column=0, sticky="w", pady=5)
-        self.raw_track1_var = tk.StringVar()
-        ttk.Entry(self.raw_frame, textvariable=self.raw_track1_var, width=70).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        
-        self.raw_track2_label = ttk.Label(self.raw_frame)
-        self.raw_track2_label.grid(row=1, column=0, sticky="w", pady=5)
-        self.raw_track2_var = tk.StringVar()
-        ttk.Entry(self.raw_frame, textvariable=self.raw_track2_var, width=70).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        
-        self.raw_track3_label = ttk.Label(self.raw_frame)
-        self.raw_track3_label.grid(row=2, column=0, sticky="w", pady=5)
-        self.raw_track3_var = tk.StringVar()
-        ttk.Entry(self.raw_frame, textvariable=self.raw_track3_var, width=70).grid(row=2, column=1, padx=5, pady=5, sticky="ew")
-        
-        raw_btn_frame = ttk.Frame(self.raw_frame)
-        raw_btn_frame.grid(row=3, column=0, columnspan=2, pady=10)
-        
-        self.read_raw_btn = ttk.Button(raw_btn_frame, command=self.read_raw_data)
-        self.read_raw_btn.pack(side="left", padx=5)
-        self.write_raw_btn = ttk.Button(raw_btn_frame, command=self.write_raw_data)
-        self.write_raw_btn.pack(side="left", padx=5)
-        
-        self.raw_frame.columnconfigure(1, weight=1)
+        """Skapar innehållet för 'Rådata'-fliken."""
+        layout = QVBoxLayout(self.raw_tab)
+        self.raw_group = QGroupBox()
+        raw_layout = QVBoxLayout(self.raw_group)
+
+        self.raw_track1_label = QLabel()
+        self.raw_track1_edit = QLineEdit()
+        raw_layout.addWidget(self.raw_track1_label)
+        raw_layout.addWidget(self.raw_track1_edit)
+
+        self.raw_track2_label = QLabel()
+        self.raw_track2_edit = QLineEdit()
+        raw_layout.addWidget(self.raw_track2_label)
+        raw_layout.addWidget(self.raw_track2_edit)
+
+        self.raw_track3_label = QLabel()
+        self.raw_track3_edit = QLineEdit()
+        raw_layout.addWidget(self.raw_track3_label)
+        raw_layout.addWidget(self.raw_track3_edit)
+
+        button_layout = QHBoxLayout()
+        self.read_raw_btn = QPushButton()
+        self.read_raw_btn.clicked.connect(self.read_raw_data)
+        self.write_raw_btn = QPushButton()
+        self.write_raw_btn.clicked.connect(self.write_raw_data)
+        button_layout.addWidget(self.read_raw_btn)
+        button_layout.addWidget(self.write_raw_btn)
+        button_layout.addStretch(1)
+        raw_layout.addLayout(button_layout)
+
+        raw_layout.addStretch(1)
+        layout.addWidget(self.raw_group)
 
     def setup_config_tab(self):
-        self.config_frame = ttk.LabelFrame(self.config_tab, padding=10)
-        self.config_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        self.leading_zero_13_label = ttk.Label(self.config_frame)
-        self.leading_zero_13_label.grid(row=0, column=0, sticky="w", pady=5)
-        self.leading_zero_13_var = tk.StringVar(value="61")
-        ttk.Entry(self.config_frame, textvariable=self.leading_zero_13_var, width=10).grid(row=0, column=1, sticky="w", padx=5, pady=5)
-        
-        self.leading_zero_2_label = ttk.Label(self.config_frame)
-        self.leading_zero_2_label.grid(row=1, column=0, sticky="w", pady=5)
-        self.leading_zero_2_var = tk.StringVar(value="22")
-        ttk.Entry(self.config_frame, textvariable=self.leading_zero_2_var, width=10).grid(row=1, column=1, sticky="w", padx=5, pady=5)
-        
-        self.set_leading_zeros_btn = ttk.Button(self.config_frame, command=self.set_leading_zeros)
-        self.set_leading_zeros_btn.grid(row=2, column=0, columnspan=2, pady=10)
-        self.check_leading_zeros_btn = ttk.Button(self.config_frame, command=self.check_leading_zeros)
-        self.check_leading_zeros_btn.grid(row=3, column=0, columnspan=2, pady=5)
-        
-        self.bpi_label = ttk.Label(self.config_frame)
-        self.bpi_label.grid(row=4, column=0, sticky="w", pady=5)
-        bpi_frame = ttk.Frame(self.config_frame)
-        bpi_frame.grid(row=4, column=1, sticky="w", padx=5, pady=5)
-        self.bpi_track1_var = tk.StringVar(value="210")
-        self.bpi_track1_label = ttk.Label(bpi_frame)
-        self.bpi_track1_label.pack(side="left")
-        ttk.Combobox(bpi_frame, textvariable=self.bpi_track1_var, values=["75", "210"], width=5).pack(side="left", padx=5)
-        self.bpi_track2_var = tk.StringVar(value="210")
-        self.bpi_track2_label = ttk.Label(bpi_frame)
-        self.bpi_track2_label.pack(side="left", padx=(10, 0))
-        ttk.Combobox(bpi_frame, textvariable=self.bpi_track2_var, values=["75", "210"], width=5).pack(side="left", padx=5)
-        self.bpi_track3_var = tk.StringVar(value="210")
-        self.bpi_track3_label = ttk.Label(bpi_frame)
-        self.bpi_track3_label.pack(side="left", padx=(10, 0))
-        ttk.Combobox(bpi_frame, textvariable=self.bpi_track3_var, values=["75", "210"], width=5).pack(side="left", padx=5)
-        self.set_bpi_btn = ttk.Button(self.config_frame, command=self.set_bpi)
-        self.set_bpi_btn.grid(row=5, column=0, columnspan=2, pady=10)
-        
-        self.bpc_label = ttk.Label(self.config_frame)
-        self.bpc_label.grid(row=6, column=0, sticky="w", pady=5)
-        bpc_frame = ttk.Frame(self.config_frame)
-        bpc_frame.grid(row=6, column=1, sticky="w", padx=5, pady=5)
-        self.bpc_track1_var = tk.StringVar(value="7")
-        self.bpc_track1_label = ttk.Label(bpc_frame)
-        self.bpc_track1_label.pack(side="left")
-        ttk.Combobox(bpc_frame, textvariable=self.bpc_track1_var, values=["5", "6", "7", "8"], width=3).pack(side="left", padx=5)
-        self.bpc_track2_var = tk.StringVar(value="5")
-        self.bpc_track2_label = ttk.Label(bpc_frame)
-        self.bpc_track2_label.pack(side="left", padx=(10, 0))
-        ttk.Combobox(bpc_frame, textvariable=self.bpc_track2_var, values=["5", "6", "7", "8"], width=3).pack(side="left", padx=5)
-        self.bpc_track3_var = tk.StringVar(value="5")
-        self.bpc_track3_label = ttk.Label(bpc_frame)
-        self.bpc_track3_label.pack(side="left", padx=(10, 0))
-        ttk.Combobox(bpc_frame, textvariable=self.bpc_track3_var, values=["5", "6", "7", "8"], width=3).pack(side="left", padx=5)
-        self.set_bpc_btn = ttk.Button(self.config_frame, command=self.set_bpc)
-        self.set_bpc_btn.grid(row=7, column=0, columnspan=2, pady=10)
-        
-        self.coercivity_label = ttk.Label(self.config_frame)
-        self.coercivity_label.grid(row=8, column=0, sticky="w", pady=5)
-        coercivity_frame = ttk.Frame(self.config_frame)
-        coercivity_frame.grid(row=8, column=1, sticky="w", padx=5, pady=5)
-        self.coercivity_var = tk.StringVar(value="Hi")
-        self.high_co_radio = ttk.Radiobutton(coercivity_frame, variable=self.coercivity_var, value="Hi")
-        self.high_co_radio.pack(side="left")
-        self.low_co_radio = ttk.Radiobutton(coercivity_frame, variable=self.coercivity_var, value="Low")
-        self.low_co_radio.pack(side="left", padx=(10, 0))
-        self.set_coercivity_btn = ttk.Button(self.config_frame, command=self.set_coercivity)
-        self.set_coercivity_btn.grid(row=9, column=0, columnspan=2, pady=10)
+        """Skapar innehållet för 'Konfiguration'-fliken."""
+        layout = QVBoxLayout(self.config_tab)
+        self.config_group = QGroupBox()
+        config_layout = QVBoxLayout(self.config_group)
+
+        # Ledande nollor
+        lz_layout = QHBoxLayout()
+        self.leading_zero_13_label = QLabel()
+        self.leading_zero_13_edit = QLineEdit("61")
+        self.leading_zero_2_label = QLabel()
+        self.leading_zero_2_edit = QLineEdit("22")
+        lz_layout.addWidget(self.leading_zero_13_label)
+        lz_layout.addWidget(self.leading_zero_13_edit)
+        lz_layout.addWidget(self.leading_zero_2_label)
+        lz_layout.addWidget(self.leading_zero_2_edit)
+        lz_layout.addStretch(1)
+        config_layout.addLayout(lz_layout)
+
+        lz_btn_layout = QHBoxLayout()
+        self.set_leading_zeros_btn = QPushButton()
+        self.set_leading_zeros_btn.clicked.connect(self.set_leading_zeros)
+        self.check_leading_zeros_btn = QPushButton()
+        self.check_leading_zeros_btn.clicked.connect(self.check_leading_zeros)
+        lz_btn_layout.addWidget(self.set_leading_zeros_btn)
+        lz_btn_layout.addWidget(self.check_leading_zeros_btn)
+        lz_btn_layout.addStretch(1)
+        config_layout.addLayout(lz_btn_layout)
+
+        # BPI
+        self.bpi_label = QLabel()
+        config_layout.addWidget(self.bpi_label)
+        bpi_layout = QHBoxLayout()
+        self.bpi_track1_label = QLabel()
+        self.bpi_track1_combo = QComboBox()
+        self.bpi_track1_combo.addItems(["75", "210"])
+        self.bpi_track1_combo.setCurrentText("210")
+        self.bpi_track2_label = QLabel()
+        self.bpi_track2_combo = QComboBox()
+        self.bpi_track2_combo.addItems(["75", "210"])
+        self.bpi_track2_combo.setCurrentText("210")
+        self.bpi_track3_label = QLabel()
+        self.bpi_track3_combo = QComboBox()
+        self.bpi_track3_combo.addItems(["75", "210"])
+        self.bpi_track3_combo.setCurrentText("210")
+        bpi_layout.addWidget(self.bpi_track1_label)
+        bpi_layout.addWidget(self.bpi_track1_combo)
+        bpi_layout.addWidget(self.bpi_track2_label)
+        bpi_layout.addWidget(self.bpi_track2_combo)
+        bpi_layout.addWidget(self.bpi_track3_label)
+        bpi_layout.addWidget(self.bpi_track3_combo)
+        bpi_layout.addStretch(1)
+        config_layout.addLayout(bpi_layout)
+        self.set_bpi_btn = QPushButton()
+        self.set_bpi_btn.clicked.connect(self.set_bpi)
+        config_layout.addWidget(self.set_bpi_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        # BPC
+        self.bpc_label = QLabel()
+        config_layout.addWidget(self.bpc_label)
+        bpc_layout = QHBoxLayout()
+        self.bpc_track1_label = QLabel()
+        self.bpc_track1_combo = QComboBox()
+        self.bpc_track1_combo.addItems(["5", "6", "7", "8"])
+        self.bpc_track1_combo.setCurrentText("7")
+        self.bpc_track2_label = QLabel()
+        self.bpc_track2_combo = QComboBox()
+        self.bpc_track2_combo.addItems(["5", "6", "7", "8"])
+        self.bpc_track2_combo.setCurrentText("5")
+        self.bpc_track3_label = QLabel()
+        self.bpc_track3_combo = QComboBox()
+        self.bpc_track3_combo.addItems(["5", "6", "7", "8"])
+        self.bpc_track3_combo.setCurrentText("5")
+        bpc_layout.addWidget(self.bpc_track1_label)
+        bpc_layout.addWidget(self.bpc_track1_combo)
+        bpc_layout.addWidget(self.bpc_track2_label)
+        bpc_layout.addWidget(self.bpc_track2_combo)
+        bpc_layout.addWidget(self.bpc_track3_label)
+        bpc_layout.addWidget(self.bpc_track3_combo)
+        bpc_layout.addStretch(1)
+        config_layout.addLayout(bpc_layout)
+        self.set_bpc_btn = QPushButton()
+        self.set_bpc_btn.clicked.connect(self.set_bpc)
+        config_layout.addWidget(self.set_bpc_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        # Koercivitet
+        self.coercivity_label = QLabel()
+        config_layout.addWidget(self.coercivity_label)
+        coercivity_layout = QHBoxLayout()
+        self.high_co_radio = QRadioButton()
+        self.high_co_radio.setChecked(True)
+        self.low_co_radio = QRadioButton()
+        coercivity_layout.addWidget(self.high_co_radio)
+        coercivity_layout.addWidget(self.low_co_radio)
+        coercivity_layout.addStretch(1)
+        config_layout.addLayout(coercivity_layout)
+        self.set_coercivity_btn = QPushButton()
+        self.set_coercivity_btn.clicked.connect(self.set_coercivity)
+        config_layout.addWidget(self.set_coercivity_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        config_layout.addStretch(1)
+        layout.addWidget(self.config_group)
 
     def setup_generator_tab(self):
-        self.gen_frame = ttk.LabelFrame(self.generator_tab, padding=10)
-        self.gen_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        self.card_type_label = ttk.Label(self.gen_frame)
-        self.card_type_label.grid(row=0, column=0, sticky="w", pady=5)
-        self.card_type_var = tk.StringVar(value="Visa")
-        card_type_combo = ttk.Combobox(self.gen_frame, textvariable=self.card_type_var, 
-                                      values=["Visa", "Mastercard", "American Express", "Diners Club"], width=20)
-        card_type_combo.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        
-        self.bin_label = ttk.Label(self.gen_frame)
-        self.bin_label.grid(row=1, column=0, sticky="w", pady=5)
-        self.bin_var = tk.StringVar()
-        ttk.Entry(self.gen_frame, textvariable=self.bin_var, width=20).grid(row=1, column=1, padx=5, pady=5, sticky="w")
-        self.bin_help_label = ttk.Label(self.gen_frame)
-        self.bin_help_label.grid(row=1, column=2, sticky="w", padx=5, pady=5)
-        
-        self.generate_card_btn = ttk.Button(self.gen_frame, command=self.generate_card)
-        self.generate_card_btn.grid(row=0, column=2, padx=10, pady=5)
-        
-        self.card_number_label = ttk.Label(self.gen_frame)
-        self.card_number_label.grid(row=2, column=0, sticky="w", pady=5)
-        self.card_number_var = tk.StringVar()
-        ttk.Entry(self.gen_frame, textvariable=self.card_number_var, width=30, state="readonly").grid(row=2, column=1, padx=5, pady=5, sticky="w")
-        
-        self.card_expiry_label = ttk.Label(self.gen_frame)
-        self.card_expiry_label.grid(row=3, column=0, sticky="w", pady=5)
-        self.card_expiry_var = tk.StringVar()
-        ttk.Entry(self.gen_frame, textvariable=self.card_expiry_var, width=10, state="readonly").grid(row=3, column=1, padx=5, pady=5, sticky="w")
-        
-        self.card_cvv_label = ttk.Label(self.gen_frame, text="CVV:")
-        self.card_cvv_label.grid(row=4, column=0, sticky="w", pady=5)
-        self.card_cvv_var = tk.StringVar()
-        ttk.Entry(self.gen_frame, textvariable=self.card_cvv_var, width=5, state="readonly").grid(row=4, column=1, padx=5, pady=5, sticky="w")
-        
-        self.copy_track1_btn = ttk.Button(self.gen_frame, command=self.copy_to_track1)
-        self.copy_track1_btn.grid(row=5, column=0, padx=5, pady=10)
-        self.copy_track2_btn = ttk.Button(self.gen_frame, command=self.copy_to_track2)
-        self.copy_track2_btn.grid(row=5, column=1, padx=5, pady=10)
-        self.copy_both_btn = ttk.Button(self.gen_frame, command=self.copy_to_both_tracks)
-        self.copy_both_btn.grid(row=5, column=2, padx=5, pady=10)
+        """Skapar innehållet för 'Kortgenerator'-fliken."""
+        layout = QVBoxLayout(self.generator_tab)
+        self.gen_group = QGroupBox()
+        gen_layout = QVBoxLayout(self.gen_group)
+
+        # Korttyp och BIN
+        type_layout = QHBoxLayout()
+        self.card_type_label = QLabel()
+        self.card_type_combo = QComboBox()
+        self.card_type_combo.addItems(["Visa", "Mastercard", "American Express", "Diners Club"])
+        self.bin_label = QLabel()
+        self.bin_edit = QLineEdit()
+        self.bin_help_label = QLabel()
+        self.generate_card_btn = QPushButton()
+        self.generate_card_btn.clicked.connect(self.generate_card)
+        type_layout.addWidget(self.card_type_label)
+        type_layout.addWidget(self.card_type_combo)
+        type_layout.addWidget(self.bin_label)
+        type_layout.addWidget(self.bin_edit)
+        type_layout.addWidget(self.bin_help_label)
+        type_layout.addWidget(self.generate_card_btn)
+        type_layout.addStretch(1)
+        gen_layout.addLayout(type_layout)
+
+        # Genererad data
+        self.card_number_label = QLabel()
+        self.card_number_edit = QLineEdit()
+        self.card_number_edit.setReadOnly(True)
+        gen_layout.addWidget(self.card_number_label)
+        gen_layout.addWidget(self.card_number_edit)
+
+        self.card_expiry_label = QLabel()
+        self.card_expiry_edit = QLineEdit()
+        self.card_expiry_edit.setReadOnly(True)
+        gen_layout.addWidget(self.card_expiry_label)
+        gen_layout.addWidget(self.card_expiry_edit)
+
+        self.card_cvv_label = QLabel("CVV:")
+        self.card_cvv_edit = QLineEdit()
+        self.card_cvv_edit.setReadOnly(True)
+        gen_layout.addWidget(self.card_cvv_label)
+        gen_layout.addWidget(self.card_cvv_edit)
+
+        # Kopieringsknappar
+        copy_layout = QHBoxLayout()
+        self.copy_track1_btn = QPushButton()
+        self.copy_track1_btn.clicked.connect(self.copy_to_track1)
+        self.copy_track2_btn = QPushButton()
+        self.copy_track2_btn.clicked.connect(self.copy_to_track2)
+        self.copy_both_btn = QPushButton()
+        self.copy_both_btn.clicked.connect(self.copy_to_both_tracks)
+        copy_layout.addWidget(self.copy_track1_btn)
+        copy_layout.addWidget(self.copy_track2_btn)
+        copy_layout.addWidget(self.copy_both_btn)
+        copy_layout.addStretch(1)
+        gen_layout.addLayout(copy_layout)
+
+        gen_layout.addStretch(1)
+        layout.addWidget(self.gen_group)
+
+    def create_log_group(self):
+        """Skapar loggfönstret."""
+        self.log_group = QGroupBox()
+        layout = QVBoxLayout(self.log_group)
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        layout.addWidget(self.log_text)
+        return self.log_group
+
+    def create_themes(self):
+        """Definierar QSS (Qt Style Sheets) för de olika teman."""
+        self.themes = {
+            "Light": """
+                QWidget { background-color: #F0F0F0; color: #000000; }
+                QMainWindow, QMenuBar, QMenu { background-color: #F0F0F0; color: #000000; }
+                QMenuBar::item:selected, QMenu::item:selected { background-color: #B0B0B0; }
+                QGroupBox { border: 1px solid #B0B0B0; margin-top: 10px; }
+                QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; }
+                QPushButton { background-color: #E0E0E0; border: 1px solid #B0B0B0; padding: 5px; border-radius: 3px; }
+                QPushButton:hover { background-color: #D0D0D0; }
+                QPushButton:pressed { background-color: #C0C0C0; }
+                QLineEdit, QComboBox, QTextEdit { background-color: #FFFFFF; border: 1px solid #B0B0B0; border-radius: 3px; }
+                QTabWidget::pane { border: 1px solid #B0B0B0; }
+                QTabBar::tab { background: #E0E0E0; padding: 8px; border: 1px solid #B0B0B0; }
+                QTabBar::tab:selected { background: #F0F0F0; }
+            """,
+            "Dark": """
+                QWidget { background-color: #2E2E2E; color: #FFFFFF; }
+                QMainWindow, QMenuBar, QMenu { background-color: #2E2E2E; color: #FFFFFF; }
+                QMenuBar::item:selected, QMenu::item:selected { background-color: #4A4A4A; }
+                QGroupBox { border: 1px solid #4A4A4A; margin-top: 10px; }
+                QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; }
+                QPushButton { background-color: #3C3C3C; border: 1px solid #4A4A4A; padding: 5px; border-radius: 3px; }
+                QPushButton:hover { background-color: #4A4A4A; }
+                QPushButton:pressed { background-color: #5A5A5A; }
+                QLineEdit, QComboBox, QTextEdit { background-color: #4A4A4A; border: 1px solid #5A5A5A; border-radius: 3px; color: #FFFFFF; }
+                QComboBox::drop-down { border: 0px; }
+                QTabWidget::pane { border: 1px solid #4A4A4A; }
+                QTabBar::tab { background: #3C3C3C; padding: 8px; border: 1px solid #4A4A4A; }
+                QTabBar::tab:selected { background: #2E2E2E; }
+            """,
+            "Matrix": """
+                QWidget { background-color: #000000; color: #00FF00; font-family: 'Courier New', monospace; }
+                QMainWindow, QMenuBar, QMenu { background-color: #000000; color: #00FF00; }
+                QMenuBar::item:selected, QMenu::item:selected { background-color: #003300; }
+                QGroupBox { border: 1px solid #00FF00; margin-top: 10px; }
+                QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; }
+                QPushButton { background-color: #003300; border: 1px solid #00FF00; padding: 5px; border-radius: 0px; }
+                QPushButton:hover { background-color: #005500; }
+                QPushButton:pressed { background-color: #007700; }
+                QLineEdit, QComboBox, QTextEdit { background-color: #001100; border: 1px solid #00FF00; border-radius: 0px; color: #00FF00; }
+                QTabWidget::pane { border: 1px solid #00FF00; }
+                QTabBar::tab { background: #003300; padding: 8px; border: 1px solid #00FF00; }
+                QTabBar::tab:selected { background: #000000; }
+            """,
+            "Synthwave": """
+                QWidget { background-color: #240046; color: #FF9E00; }
+                QMainWindow, QMenuBar, QMenu { background-color: #240046; color: #FF9E00; }
+                QMenuBar::item:selected, QMenu::item:selected { background-color: #5A189A; }
+                QGroupBox { border: 1px solid #FF9E00; margin-top: 10px; border-radius: 5px; }
+                QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; }
+                QPushButton { background-color: #5A189A; border: 1px solid #FF9E00; padding: 5px; border-radius: 5px; }
+                QPushButton:hover { background-color: #7B2CBF; }
+                QPushButton:pressed { background-color: #9D4EDD; }
+                QLineEdit, QComboBox, QTextEdit { background-color: #3C096C; border: 1px solid #FF9E00; border-radius: 5px; color: #FF9E00; }
+                QTabWidget::pane { border: 1px solid #FF9E00; }
+                QTabBar::tab { background: #5A189A; padding: 8px; border: 1px solid #FF9E00; border-top-left-radius: 5px; border-top-right-radius: 5px; }
+                QTabBar::tab:selected { background: #240046; }
+            """,
+            "Dracula": """
+                QWidget { background-color: #282a36; color: #f8f8f2; }
+                QMainWindow, QMenuBar, QMenu { background-color: #282a36; color: #f8f8f2; }
+                QMenuBar::item:selected, QMenu::item:selected { background-color: #44475a; }
+                QGroupBox { border: 1px solid #44475a; margin-top: 10px; border-radius: 5px; }
+                QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; }
+                QPushButton { background-color: #44475a; border: 1px solid #6272a4; padding: 5px; border-radius: 5px; }
+                QPushButton:hover { background-color: #6272a4; }
+                QPushButton:pressed { background-color: #bd93f9; }
+                QLineEdit, QComboBox, QTextEdit { background-color: #44475a; border: 1px solid #6272a4; border-radius: 5px; color: #f8f8f2; }
+                QTabWidget::pane { border: 1px solid #44475a; }
+                QTabBar::tab { background: #44475a; padding: 8px; border: 1px solid #6272a4; border-top-left-radius: 5px; border-top-right-radius: 5px; }
+                QTabBar::tab:selected { background: #282a36; }
+            """
+        }
+
+    def set_theme(self, theme_name):
+        """Applicerar vald QSS-stilmall på applikationen."""
+        if theme_name in self.themes:
+            self.setStyleSheet(self.themes[theme_name])
+            self.log_message(self.strings["theme_changed"].format(theme_name))
 
     def set_language(self, lang_code):
-        """Sets the application language and updates all UI text."""
+        """Ställer in programspråket och uppdaterar all UI-text."""
         self.current_language = lang_code
         self.strings = self.languages[self.current_language]
         self.update_ui_text()
 
     def update_ui_text(self):
-        """Updates all text elements in the UI to the current language."""
+        """Uppdaterar alla text-element i UI:t till det valda språket."""
         s = self.strings
-        self.root.title(s["window_title"])
+        self.setWindowTitle(s["window_title"])
 
-        # Menu
-        self.menu_bar.entryconfig(1, label=s["themes"])
-        self.menu_bar.entryconfig(2, label=s["language"])
-        self.theme_menu.entryconfig(0, label=s["light"])
-        self.theme_menu.entryconfig(1, label=s["dark"])
-        self.theme_menu.entryconfig(2, label=s["matrix"])
-        self.theme_menu.entryconfig(3, label=s["synthwave"])
-        self.theme_menu.entryconfig(4, label=s["dracula"])
+        # Meny
+        self.theme_menu.setTitle(s["themes"])
+        self.language_menu.setTitle(s["language"])
+        self.theme_light_action.setText(s["light"])
+        self.theme_dark_action.setText(s["dark"])
+        self.theme_matrix_action.setText(s["matrix"])
+        self.theme_synthwave_action.setText(s["synthwave"])
+        self.theme_dracula_action.setText(s["dracula"])
 
-        # Connection
-        self.connection_frame.config(text=s["connection"])
-        self.port_label.config(text=s["port"])
-        self.refresh_btn.config(text=s["refresh_ports"])
-        self.connect_btn.config(text=s["connect"] if not self.is_connected else s["disconnect"])
-        self.status_label.config(text=s["disconnected"] if not self.is_connected else s["connected"])
+        # Anslutning
+        self.connection_group.setTitle(s["connection"])
+        self.port_label.setText(s["port"])
+        self.refresh_btn.setText(s["refresh_ports"])
+        self.update_connection_status_ui() # Uppdaterar anslut/koppla från knapp och status
 
-        # Notebook Tabs
-        self.notebook.tab(0, text=s["basic"])
-        self.notebook.tab(1, text=s["advanced"])
-        self.notebook.tab(2, text=s["raw_data"])
-        self.notebook.tab(3, text=s["configuration"])
-        self.notebook.tab(4, text=s["generator"])
+        # Flikar
+        self.notebook.setTabText(0, s["basic"])
+        self.notebook.setTabText(1, s["advanced"])
+        self.notebook.setTabText(2, s["raw_data"])
+        self.notebook.setTabText(3, s["configuration"])
+        self.notebook.setTabText(4, s["generator"])
 
-        # Basic Tab
-        self.data_frame.config(text=s["card_data"])
-        self.track1_label.config(text=s["track1"])
-        self.track2_label.config(text=s["track2"])
-        self.track3_label.config(text=s["track3"])
-        self.select_tracks_label.config(text=s["select_tracks_to_write"])
-        self.track1_check.config(text=s["track1"][:-1])
-        self.track2_check.config(text=s["track2"][:-1])
-        self.track3_check.config(text=s["track3"][:-1])
-        self.read_btn.config(text=s["read_card"])
-        self.write_btn.config(text=s["write_card"])
-        self.erase_btn.config(text=s["erase_card"])
+        # Grundläggande-flik
+        self.data_group.setTitle(s["card_data"])
+        self.track1_label.setText(s["track1"])
+        self.track2_label.setText(s["track2"])
+        self.track3_label.setText(s["track3"])
+        self.select_tracks_label.setText(s["select_tracks_to_write"])
+        self.track1_check.setText(s["track1"][:-1])
+        self.track2_check.setText(s["track2"][:-1])
+        self.track3_check.setText(s["track3"][:-1])
+        self.read_btn.setText(s["read_card"])
+        self.write_btn.setText(s["write_card"])
+        self.erase_btn.setText(s["erase_card"])
 
-        # Advanced Tab
-        self.led_frame.config(text=s["led_control"])
-        self.all_led_on_btn.config(text=s["all_led_on"])
-        self.all_led_off_btn.config(text=s["all_led_off"])
-        self.green_led_btn.config(text=s["green_led"])
-        self.yellow_led_btn.config(text=s["yellow_led"])
-        self.red_led_btn.config(text=s["red_led"])
-        self.test_frame.config(text=s["test_functions"])
-        self.comm_test_btn.config(text=s["comm_test"])
-        self.sensor_test_btn.config(text=s["sensor_test"])
-        self.ram_test_btn.config(text=s["ram_test"])
-        self.info_frame.config(text=s["device_info"])
-        self.get_model_btn.config(text=s["get_model"])
-        self.get_firmware_btn.config(text=s["get_firmware"])
-        self.get_coercivity_btn.config(text=s["get_coercivity"])
+        # Avancerat-flik
+        self.led_group.setTitle(s["led_control"])
+        self.all_led_on_btn.setText(s["all_led_on"])
+        self.all_led_off_btn.setText(s["all_led_off"])
+        self.green_led_btn.setText(s["green_led"])
+        self.yellow_led_btn.setText(s["yellow_led"])
+        self.red_led_btn.setText(s["red_led"])
+        self.test_group.setTitle(s["test_functions"])
+        self.comm_test_btn.setText(s["comm_test"])
+        self.sensor_test_btn.setText(s["sensor_test"])
+        self.ram_test_btn.setText(s["ram_test"])
+        self.info_group.setTitle(s["device_info"])
+        self.get_model_btn.setText(s["get_model"])
+        self.get_firmware_btn.setText(s["get_firmware"])
+        self.get_coercivity_btn.setText(s["get_coercivity"])
 
-        # Raw Tab
-        self.raw_frame.config(text=s["raw_data"])
-        self.raw_track1_label.config(text=s["raw_track1"])
-        self.raw_track2_label.config(text=s["raw_track2"])
-        self.raw_track3_label.config(text=s["raw_track3"])
-        self.read_raw_btn.config(text=s["read_raw"])
-        self.write_raw_btn.config(text=s["write_raw"])
+        # Rådata-flik
+        self.raw_group.setTitle(s["raw_data"])
+        self.raw_track1_label.setText(s["raw_track1"])
+        self.raw_track2_label.setText(s["raw_track2"])
+        self.raw_track3_label.setText(s["raw_track3"])
+        self.read_raw_btn.setText(s["read_raw"])
+        self.write_raw_btn.setText(s["write_raw"])
 
-        # Config Tab
-        self.config_frame.config(text=s["configuration"])
-        self.leading_zero_13_label.config(text=s["leading_zeros_13"])
-        self.leading_zero_2_label.config(text=s["leading_zeros_2"])
-        self.set_leading_zeros_btn.config(text=s["set_leading_zeros"])
-        self.check_leading_zeros_btn.config(text=s["check_leading_zeros"])
-        self.bpi_label.config(text=s["bpi"])
-        self.bpi_track1_label.config(text=s["track1"][:-1])
-        self.bpi_track2_label.config(text=s["track2"][:-1])
-        self.bpi_track3_label.config(text=s["track3"][:-1])
-        self.set_bpi_btn.config(text=s["set_bpi"])
-        self.bpc_label.config(text=s["bpc"])
-        self.bpc_track1_label.config(text=s["track1"][:-1])
-        self.bpc_track2_label.config(text=s["track2"][:-1])
-        self.bpc_track3_label.config(text=s["track3"][:-1])
-        self.set_bpc_btn.config(text=s["set_bpc"])
-        self.coercivity_label.config(text=s["coercivity"])
-        self.high_co_radio.config(text=s["high_co"])
-        self.low_co_radio.config(text=s["low_co"])
-        self.set_coercivity_btn.config(text=s["set_coercivity"])
+        # Konfiguration-flik
+        self.config_group.setTitle(s["configuration"])
+        self.leading_zero_13_label.setText(s["leading_zeros_13"])
+        self.leading_zero_2_label.setText(s["leading_zeros_2"])
+        self.set_leading_zeros_btn.setText(s["set_leading_zeros"])
+        self.check_leading_zeros_btn.setText(s["check_leading_zeros"])
+        self.bpi_label.setText(s["bpi"])
+        self.bpi_track1_label.setText(s["track1"][:-1])
+        self.bpi_track2_label.setText(s["track2"][:-1])
+        self.bpi_track3_label.setText(s["track3"][:-1])
+        self.set_bpi_btn.setText(s["set_bpi"])
+        self.bpc_label.setText(s["bpc"])
+        self.bpc_track1_label.setText(s["track1"][:-1])
+        self.bpc_track2_label.setText(s["track2"][:-1])
+        self.bpc_track3_label.setText(s["track3"][:-1])
+        self.set_bpc_btn.setText(s["set_bpc"])
+        self.coercivity_label.setText(s["coercivity"])
+        self.high_co_radio.setText(s["high_co"])
+        self.low_co_radio.setText(s["low_co"])
+        self.set_coercivity_btn.setText(s["set_coercivity"])
 
-        # Generator Tab
-        self.gen_frame.config(text=s["generator"])
-        self.card_type_label.config(text=s["card_type"])
-        self.bin_label.config(text=s["bin"])
-        self.bin_help_label.config(text=s["bin_help"])
-        self.generate_card_btn.config(text=s["generate_card"])
-        self.card_number_label.config(text=s["card_number"])
-        self.card_expiry_label.config(text=s["expiry_date"])
-        self.copy_track1_btn.config(text=s["copy_to_track1"])
-        self.copy_track2_btn.config(text=s["copy_to_track2"])
-        self.copy_both_btn.config(text=s["copy_both"])
+        # Generator-flik
+        self.gen_group.setTitle(s["generator"])
+        self.card_type_label.setText(s["card_type"])
+        self.bin_label.setText(s["bin"])
+        self.bin_help_label.setText(s["bin_help"])
+        self.generate_card_btn.setText(s["generate_card"])
+        self.card_number_label.setText(s["card_number"])
+        self.card_expiry_label.setText(s["expiry_date"])
+        self.copy_track1_btn.setText(s["copy_to_track1"])
+        self.copy_track2_btn.setText(s["copy_to_track2"])
+        self.copy_both_btn.setText(s["copy_both"])
 
-        # Log
-        self.log_frame.config(text=s["log"])
+        # Logg
+        self.log_group.setTitle(s["log"])
 
-    def set_theme(self, theme_name):
-        themes = {
-            "Light": {"bg": "#F0F0F0", "fg": "#000000", "button_bg": "#E0E0E0", "entry_bg": "#FFFFFF", "text_bg": "#FFFFFF", "select_bg": "#E0E0E0"},
-            "Dark": {"bg": "#2E2E2E", "fg": "#FFFFFF", "button_bg": "#3C3C3C", "entry_bg": "#4A4A4A", "text_bg": "#4A4A4A", "select_bg": "#4A4A4A"},
-            "Matrix": {"bg": "#000000", "fg": "#00FF00", "button_bg": "#003300", "entry_bg": "#001100", "text_bg": "#001100", "select_bg": "#003300"},
-            "Synthwave": {"bg": "#240046", "fg": "#FF9E00", "button_bg": "#5A189A", "entry_bg": "#3C096C", "text_bg": "#3C096C", "select_bg": "#5A189A"},
-            "Dracula": {"bg": "#282A36", "fg": "#F8F8F2", "button_bg": "#44475A", "entry_bg": "#44475A", "text_bg": "#44475A", "select_bg": "#6272A4"}
-        }
-        theme = themes.get(theme_name, themes["Light"])
-
-        # Use ttk.Style for consistent theming
-        style = ttk.Style()
-        style.theme_use('default')
-
-        # Configure styles for all ttk widgets
-        style.configure('.', background=theme["bg"], foreground=theme["fg"], fieldbackground=theme["entry_bg"], borderwidth=1)
-        style.map('.', background=[('active', theme["select_bg"])])
-        
-        style.configure('TButton', background=theme["button_bg"], foreground=theme["fg"], padding=5)
-        style.map('TButton', background=[('active', theme["select_bg"])])
-        
-        style.configure('TFrame', background=theme["bg"])
-        style.configure('TLabel', background=theme["bg"], foreground=theme["fg"])
-        style.configure('TLabelFrame', background=theme["bg"], foreground=theme["fg"])
-        style.configure('TLabelFrame.Label', background=theme["bg"], foreground=theme["fg"])
-        
-        style.configure('TEntry', fieldbackground=theme["entry_bg"], foreground=theme["fg"], insertcolor=theme["fg"])
-        
-        style.configure('TCombobox', fieldbackground=theme["entry_bg"], foreground=theme["fg"], selectbackground=theme["select_bg"])
-        style.map('TCombobox', fieldbackground=[('readonly', theme["entry_bg"])])
-        
-        style.configure('TCheckbutton', background=theme["bg"], foreground=theme["fg"])
-        # --- FIX: Only map indicator color for the 'selected' state ---
-        # This allows the unchecked box to be visible on all themes.
-        style.map('TCheckbutton', background=[('active', theme["bg"])], indicatorcolor=[('selected', theme["fg"])])
-        
-        style.configure('TRadiobutton', background=theme["bg"], foreground=theme["fg"])
-        # --- FIX: Only map indicator color for the 'selected' state ---
-        # This allows the unselected circle to be visible on all themes.
-        style.map('TRadiobutton', background=[('active', theme["bg"])], indicatorcolor=[('selected', theme["fg"])])
-        
-        style.configure('TNotebook', background=theme["bg"])
-        style.configure('TNotebook.Tab', background=theme["bg"], foreground=theme["fg"], padding=[5, 2])
-        style.map('TNotebook.Tab', background=[('selected', theme["select_bg"])], foreground=[('selected', theme["fg"])])
-        
-        # Configure non-ttk widgets
-        self.root.configure(bg=theme["bg"])
-        self.log_text.configure(bg=theme["text_bg"], fg=theme["fg"], insertbackground=theme["fg"],
-                                selectbackground=theme["select_bg"], selectforeground=theme["fg"])
-        self.menu_bar.configure(bg=theme["bg"], fg=theme["fg"], activebackground=theme["select_bg"], activeforeground=theme["fg"])
-        self.theme_menu.configure(bg=theme["bg"], fg=theme["fg"], activebackground=theme["select_bg"], activeforeground=theme["fg"])
-        self.language_menu.configure(bg=theme["bg"], fg=theme["fg"], activebackground=theme["select_bg"], activeforeground=theme["fg"])
-
-        self.log_message(self.strings["theme_changed"].format(theme_name))
+    # --- Backend-logik (i stort sett oförändrad från originalet) ---
 
     def auto_detect_port(self):
         self.refresh_ports()
         ports = serial.tools.list_ports.comports()
         for port in ports:
             if "USB" in port.description or "Serial" in port.description:
-                self.port_var.set(port.device)
+                self.port_combo.setCurrentText(port.device)
                 break
     
     def refresh_ports(self):
+        self.port_combo.clear()
         ports = [port.device for port in serial.tools.list_ports.comports()]
-        self.port_combo['values'] = ports
-        if ports and not self.port_var.get():
-            self.port_var.set(ports[0])
+        self.port_combo.addItems(ports)
     
     def toggle_connection(self):
         if not self.is_connected:
@@ -633,9 +791,9 @@ class MSRE206App:
             self.disconnect_serial()
     
     def connect_serial(self):
-        port = self.port_var.get()
+        port = self.port_combo.currentText()
         if not port:
-            messagebox.showerror(self.strings["error"], self.strings["port_select_error"])
+            QMessageBox.critical(self, self.strings["error"], self.strings["port_select_error"])
             return
         
         try:
@@ -644,7 +802,7 @@ class MSRE206App:
             self.log_message(self.strings["connected_to"].format(port))
             self.reset_device()
         except Exception as e:
-            messagebox.showerror(self.strings["connection_error"], self.strings["could_not_connect"].format(port, str(e)))
+            QMessageBox.critical(self, self.strings["connection_error"], self.strings["could_not_connect"].format(port, str(e)))
         finally:
             self.update_connection_status_ui()
 
@@ -657,18 +815,25 @@ class MSRE206App:
         
     def update_connection_status_ui(self):
         s = self.strings
-        if self.is_connected:
-            self.connect_btn.config(text=s["disconnect"])
-            self.status_label.config(text=s["connected"], foreground="green")
-            self.read_btn.config(state="normal")
-            self.write_btn.config(state="normal")
-            self.erase_btn.config(state="normal")
+        is_enabled = self.is_connected
+        
+        if is_enabled:
+            self.connect_btn.setText(s["disconnect"])
+            self.status_label.setText(f"<font color='green'>{s['connected']}</font>")
         else:
-            self.connect_btn.config(text=s["connect"])
-            self.status_label.config(text=s["disconnected"], foreground="red")
-            self.read_btn.config(state="disabled")
-            self.write_btn.config(state="disabled")
-            self.erase_btn.config(state="disabled")
+            self.connect_btn.setText(s["connect"])
+            self.status_label.setText(f"<font color='red'>{s['disconnected']}</font>")
+        
+        # Aktivera/inaktivera knappar baserat på anslutningsstatus
+        self.read_btn.setEnabled(is_enabled)
+        self.write_btn.setEnabled(is_enabled)
+        self.erase_btn.setEnabled(is_enabled)
+        # ... och så vidare för alla andra knappar som kräver anslutning
+        for btn in self.advanced_tab.findChildren(QPushButton) + \
+                   self.raw_tab.findChildren(QPushButton) + \
+                   self.config_tab.findChildren(QPushButton):
+            btn.setEnabled(is_enabled)
+
 
     def reset_device(self):
         if self.ser and self.ser.is_open:
@@ -680,12 +845,13 @@ class MSRE206App:
     
     def send_command(self, command, description, expect_response=True, timeout=10):
         if not self.is_connected:
-            messagebox.showerror(self.strings["error"], self.strings["not_connected"])
+            QMessageBox.critical(self, self.strings["error"], self.strings["not_connected"])
             return None
         
         try:
             self.ser.write(command)
             self.log_message(self.strings["command_sent"].format(description))
+            QApplication.processEvents() # Håller UI:t responsivt
             
             if not expect_response: return None
                 
@@ -696,6 +862,7 @@ class MSRE206App:
                     response += self.ser.read(self.ser.in_waiting)
                     if len(response) >= 2 and response[-2] == 0x1B: break
                 time.sleep(0.05)
+                QApplication.processEvents()
             
             if response: return response
             else:
@@ -705,11 +872,7 @@ class MSRE206App:
         except Exception as e:
             self.log_message(self.strings["command_error"].format(description, str(e)))
             return None
-    
-    # --- All other methods (read_card, write_card, generate_card, etc.) remain the same ---
-    # --- but with hardcoded strings replaced by self.strings lookup. ---
-    # (The following is a condensed version for brevity, the full logic is implemented)
-    
+
     def read_card(self):
         response = self.send_command(bytes([0x1B, 0x72]), self.strings["read_card"], timeout=15)
         if response: self.process_read_response(response)
@@ -721,7 +884,6 @@ class MSRE206App:
                 return
             
             tracks = {1: "", 2: "", 3: ""}
-            # Simplified parsing logic for brevity
             parts = response.split(b'\x1b')[1:]
             for part in parts:
                 if not part: continue
@@ -731,7 +893,7 @@ class MSRE206App:
                 elif track_num == 0x02: tracks[2] = data.decode(errors='ignore')
                 elif track_num == 0x03: tracks[3] = data.decode(errors='ignore')
 
-            self.root.after(0, lambda: self.update_track_data(tracks))
+            self.update_track_data(tracks)
             
             status_byte = response[-1]
             if status_byte == 0x30: self.log_message(self.strings["read_success"])
@@ -740,19 +902,19 @@ class MSRE206App:
             self.log_message(self.strings["process_error"].format(str(e)))
 
     def update_track_data(self, tracks):
-        self.track1_var.set(tracks.get(1, ''))
-        self.track2_var.set(tracks.get(2, ''))
-        self.track3_var.set(tracks.get(3, ''))
+        self.track1_edit.setText(tracks.get(1, ''))
+        self.track2_edit.setText(tracks.get(2, ''))
+        self.track3_edit.setText(tracks.get(3, ''))
 
     def write_card(self):
-        if not any([self.track1_write.get(), self.track2_write.get(), self.track3_write.get()]):
-            messagebox.showwarning(self.strings["warning"], self.strings["select_track_to_write_warning"])
+        if not any([self.track1_check.isChecked(), self.track2_check.isChecked(), self.track3_check.isChecked()]):
+            QMessageBox.warning(self, self.strings["warning"], self.strings["select_track_to_write_warning"])
             return
         
         data_block = bytearray([0x1B, 0x73])
-        if self.track1_write.get() and self.track1_var.get(): data_block += b'\x1b\x01' + self.track1_var.get().encode()
-        if self.track2_write.get() and self.track2_var.get(): data_block += b'\x1b\x02' + self.track2_var.get().encode()
-        if self.track3_write.get() and self.track3_var.get(): data_block += b'\x1b\x03' + self.track3_var.get().encode()
+        if self.track1_check.isChecked() and self.track1_edit.text(): data_block += b'\x1b\x01' + self.track1_edit.text().encode()
+        if self.track2_check.isChecked() and self.track2_edit.text(): data_block += b'\x1b\x02' + self.track2_edit.text().encode()
+        if self.track3_check.isChecked() and self.track3_edit.text(): data_block += b'\x1b\x03' + self.track3_edit.text().encode()
         data_block += b'?\x1c'
         
         command = b'\x1b\x77' + data_block
@@ -766,12 +928,12 @@ class MSRE206App:
 
     def erase_card(self):
         select_byte = 0
-        if self.track1_write.get(): select_byte |= 0x01
-        if self.track2_write.get(): select_byte |= 0x02
-        if self.track3_write.get(): select_byte |= 0x04
+        if self.track1_check.isChecked(): select_byte |= 0x01
+        if self.track2_check.isChecked(): select_byte |= 0x02
+        if self.track3_check.isChecked(): select_byte |= 0x04
         
         if select_byte == 0:
-            messagebox.showwarning(self.strings["warning"], self.strings["select_track_to_erase_warning"])
+            QMessageBox.warning(self, self.strings["warning"], self.strings["select_track_to_erase_warning"])
             return
             
         command = bytes([0x1B, 0x63, select_byte])
@@ -843,7 +1005,7 @@ class MSRE206App:
                 elif track_num == 3: tracks[3] = data.hex()
                 pos += 3 + length
             
-            self.root.after(0, lambda: self.update_raw_track_data(tracks))
+            self.update_raw_track_data(tracks)
             
             status_byte = response[-1]
             if status_byte == 0x30: self.log_message(self.strings["raw_read_success"])
@@ -852,21 +1014,21 @@ class MSRE206App:
             self.log_message(self.strings["process_error"].format(str(e)))
 
     def update_raw_track_data(self, tracks):
-        self.raw_track1_var.set(tracks.get(1, ''))
-        self.raw_track2_var.set(tracks.get(2, ''))
-        self.raw_track3_var.set(tracks.get(3, ''))
+        self.raw_track1_edit.setText(tracks.get(1, ''))
+        self.raw_track2_edit.setText(tracks.get(2, ''))
+        self.raw_track3_edit.setText(tracks.get(3, ''))
 
     def write_raw_data(self):
         data_block = bytearray([0x1B, 0x73])
         try:
-            if self.raw_track1_var.get():
-                raw = bytes.fromhex(self.raw_track1_var.get())
+            if self.raw_track1_edit.text():
+                raw = bytes.fromhex(self.raw_track1_edit.text())
                 data_block += bytes([0x1B, 0x01, len(raw)]) + raw
-            if self.raw_track2_var.get():
-                raw = bytes.fromhex(self.raw_track2_var.get())
+            if self.raw_track2_edit.text():
+                raw = bytes.fromhex(self.raw_track2_edit.text())
                 data_block += bytes([0x1B, 0x02, len(raw)]) + raw
-            if self.raw_track3_var.get():
-                raw = bytes.fromhex(self.raw_track3_var.get())
+            if self.raw_track3_edit.text():
+                raw = bytes.fromhex(self.raw_track3_edit.text())
                 data_block += bytes([0x1B, 0x03, len(raw)]) + raw
         except ValueError as e:
             track = '1' if '1' in str(e) else '2' if '2' in str(e) else '3'
@@ -885,8 +1047,8 @@ class MSRE206App:
     
     def set_leading_zeros(self):
         try:
-            lz_13 = int(self.leading_zero_13_var.get())
-            lz_2 = int(self.leading_zero_2_var.get())
+            lz_13 = int(self.leading_zero_13_edit.text())
+            lz_2 = int(self.leading_zero_2_edit.text())
             if not (0 <= lz_13 <= 255 and 0 <= lz_2 <= 255): raise ValueError()
             
             command = bytes([0x1B, 0x7A, lz_13, lz_2])
@@ -906,17 +1068,17 @@ class MSRE206App:
     def set_bpi(self):
         try:
             bpi_map = {"75": 0xA0, "210": 0xA1}
-            cmd1 = bytes([0x1B, 0x62, bpi_map[self.bpi_track1_var.get()]])
+            cmd1 = bytes([0x1B, 0x62, bpi_map[self.bpi_track1_combo.currentText()]])
             
             bpi_map_t2 = {"75": 0x4B, "210": 0xD2}
-            cmd2 = bytes([0x1B, 0x62, bpi_map_t2[self.bpi_track2_var.get()]])
+            cmd2 = bytes([0x1B, 0x62, bpi_map_t2[self.bpi_track2_combo.currentText()]])
             
             bpi_map_t3 = {"75": 0xC0, "210": 0xC1}
-            cmd3 = bytes([0x1B, 0x62, bpi_map_t3[self.bpi_track3_var.get()]])
+            cmd3 = bytes([0x1B, 0x62, bpi_map_t3[self.bpi_track3_combo.currentText()]])
             
-            for cmd, track, bpi_val in [(cmd1, self.strings["track1"][:-1], self.bpi_track1_var.get()),
-                                        (cmd2, self.strings["track2"][:-1], self.bpi_track2_var.get()),
-                                        (cmd3, self.strings["track3"][:-1], self.bpi_track3_var.get())]:
+            for cmd, track, bpi_val in [(cmd1, self.strings["track1"][:-1], self.bpi_track1_combo.currentText()),
+                                        (cmd2, self.strings["track2"][:-1], self.bpi_track2_combo.currentText()),
+                                        (cmd3, self.strings["track3"][:-1], self.bpi_track3_combo.currentText())]:
                 response = self.send_command(cmd, f"Set BPI for {track}")
                 if response == b'\x1b\x30': self.log_message(self.strings["bpi_set_success"].format(track, bpi_val))
                 elif response: self.log_message(self.strings["bpi_set_fail"].format(track, response.hex()))
@@ -925,9 +1087,9 @@ class MSRE206App:
 
     def set_bpc(self):
         try:
-            bpc1 = int(self.bpc_track1_var.get())
-            bpc2 = int(self.bpc_track2_var.get())
-            bpc3 = int(self.bpc_track3_var.get())
+            bpc1 = int(self.bpc_track1_combo.currentText())
+            bpc2 = int(self.bpc_track2_combo.currentText())
+            bpc3 = int(self.bpc_track3_combo.currentText())
             if not (5 <= bpc1 <= 8 and 5 <= bpc2 <= 8 and 5 <= bpc3 <= 8): raise ValueError()
             
             command = bytes([0x1B, 0x6F, bpc1, bpc2, bpc3])
@@ -940,25 +1102,25 @@ class MSRE206App:
             self.log_message(self.strings["invalid_bpc_value"])
             
     def set_coercivity(self):
-        cmd_code = 0x78 if self.coercivity_var.get() == "Hi" else 0x79
+        cmd_code = 0x78 if self.high_co_radio.isChecked() else 0x79
         response = self.send_command(bytes([0x1B, cmd_code]), self.strings["set_coercivity"])
         if response == b'\x1b\x30':
-            co_text = self.strings["high_co"] if self.coercivity_var.get() == "Hi" else self.strings["low_co"]
+            co_text = self.strings["high_co"] if self.high_co_radio.isChecked() else self.strings["low_co"]
             self.log_message(self.strings["coercivity_set_success"].format(co_text))
         elif response: self.log_message(self.strings["coercivity_set_fail"].format(response.hex()))
 
     def generate_card(self):
-        card_type = self.card_type_var.get()
-        bin_number = self.bin_var.get().strip()
+        card_type = self.card_type_combo.currentText()
+        bin_number = self.bin_edit.text().strip()
         card_number = self.generate_card_number(card_type, bin_number)
         if not card_number: return
         
         expiry_date = self.generate_expiry_date()
         cvv = self.generate_cvv(card_type)
         
-        self.card_number_var.set(card_number)
-        self.card_expiry_var.set(expiry_date)
-        self.card_cvv_var.set(cvv)
+        self.card_number_edit.setText(card_number)
+        self.card_expiry_edit.setText(expiry_date)
+        self.card_cvv_edit.setText(cvv)
         
         self.log_message(self.strings["card_generated"].format(card_type, card_number))
 
@@ -966,7 +1128,7 @@ class MSRE206App:
         s = self.strings
         if bin_number:
             if len(bin_number) != 6 or not bin_number.isdigit():
-                messagebox.showerror(s["error"], s["invalid_bin_error"])
+                QMessageBox.critical(self, s["error"], s["invalid_bin_error"])
                 return ""
             
             warnings = {
@@ -976,7 +1138,9 @@ class MSRE206App:
                 "Diners Club": (not bin_number.startswith(("36", "38", "39")), s["bin_mismatch_warning_diners"])
             }
             if card_type in warnings and warnings[card_type][0]:
-                if not messagebox.askyesno(s["warning"], warnings[card_type][1]):
+                reply = QMessageBox.question(self, s["warning"], warnings[card_type][1],
+                                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if reply == QMessageBox.StandardButton.No:
                     return ""
             prefix = bin_number
         else:
@@ -1009,24 +1173,24 @@ class MSRE206App:
     def generate_expiry_date(self):
         now = datetime.now()
         random_date = now + timedelta(days=random.randint(365, 365 * 5))
-        return random_date.strftime("%m%y") # YYMM format for tracks
+        return random_date.strftime("%y%m") # YYMM format för spår
 
     def generate_cvv(self, card_type):
         return str(random.randint(1000, 9999)) if card_type == "American Express" else str(random.randint(100, 999))
 
     def copy_to_track1(self):
-        card_number = self.card_number_var.get()
-        expiry_date = self.card_expiry_var.get() # YYMM
+        card_number = self.card_number_edit.text()
+        expiry_date = self.card_expiry_edit.text() # YYMM
         card_holder = "TEST/CARDHOLDER"
         track1_data = f"%B{card_number}^{card_holder}^{expiry_date}101?"
-        self.track1_var.set(track1_data)
+        self.track1_edit.setText(track1_data)
         self.log_message(self.strings["copied_to_track1"])
 
     def copy_to_track2(self):
-        card_number = self.card_number_var.get()
-        expiry_date = self.card_expiry_var.get() # YYMM
+        card_number = self.card_number_edit.text()
+        expiry_date = self.card_expiry_edit.text() # YYMM
         track2_data = f";{card_number}={expiry_date}101?"
-        self.track2_var.set(track2_data)
+        self.track2_edit.setText(track2_data)
         self.log_message(self.strings["copied_to_track2"])
 
     def copy_to_both_tracks(self):
@@ -1035,14 +1199,17 @@ class MSRE206App:
         self.log_message(self.strings["copied_to_both"])
 
     def log_message(self, message):
-        def update_log():
-            self.log_text.config(state="normal")
-            self.log_text.insert("end", f"{time.strftime('%H:%M:%S')} - {message}\n")
-            self.log_text.see("end")
-            self.log_text.config(state="disabled")
-        self.root.after(0, update_log)
+        timestamp = time.strftime('%H:%M:%S')
+        self.log_text.append(f"{timestamp} - {message}")
+        self.log_text.moveCursor(QTextCursor.MoveOperation.End)
+
+    def closeEvent(self, event):
+        """Säkerställer att serieporten stängs när fönstret stängs."""
+        self.disconnect_serial()
+        event.accept()
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = MSRE206App(root)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    window = MSRE206_Qt_App()
+    window.show()
+    sys.exit(app.exec())
